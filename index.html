@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Coca-Cola Ecosystem — Manos + Personaje + Audio</title>
+
+<!-- A-Frame para nuestro personaje 3D -->
+<script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/donmccurdy/aframe-extras@v6.1.0/dist/aframe-extras.min.js"></script>
+
+<!-- model-viewer para el ecosystem de viking glb -->
+<script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+
+<!-- MediaPipe: detección de manos y audio meter -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<!-- Estilos -->
+<link rel="stylesheet" href="joystick.css">
+<style>
+/* ===== RESET + BASE ===== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    margin: 0;
+    overflow: hidden;
+    background: #000;
+    font-family: 'Rajdhani', 'Inter', Arial, sans-serif;
+    color: white;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* ===== FONDO DEGRADADO ANIMADO ===== */
+.gradient-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    background: linear-gradient(135deg, #0a0a1a 0%, #1a0a2e 30%, #4a2a5e 60%, #b30000 100%);
+    background-size: 300% 300%;
+    animation: gradient-shift 20s ease infinite;
+}
+@keyframes gradient-shift {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+}
+.scanlines {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: repeating-linear-gradient(0deg, transparent 0, transparent 2px, rgba(0,0,0,0.12) 2px, rgba(0,0,0,0.12) 4px);
+}
+
+/* ===== CÁMARA (mini preview) ===== */
+#camera {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    width: 220px;
+    height: 160px;
+    object-fit: cover;
+    border-radius: 16px;
+    border: 2px solid rgba(255, 45, 45, 0.5);
+    z-index: 100;
+    transform: scaleX(-1);
+    box-shadow: 0 0 20px rgba(255, 45, 45, 0.3);
+}
+
+/* ===== METER DE AUDIO (lateral derecho) ===== */
+#meterContainer {
+    position: fixed;
+    right: 20px;
+    top: 20px;
+    width: 40px;
+    height: 80vh;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 45, 45, 0.3);
+    border-radius: 20px;
+    display: flex;
+    align-items: flex-end;
+    z-index: 9999;
+    overflow: hidden;
+}
+#meter {
+    width: 100%;
+    height: 0%;
+    background: linear-gradient(to top, #00ffcc 0%, #ffaa00 50%, #ff2d2d 100%);
+    box-shadow: 0 0 20px rgba(255, 45, 45, 0.5);
+    transition: height 0.1s linear;
+}
+#meterLabel {
+    position: fixed;
+    right: 16px;
+    top: calc(80vh + 30px);
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    color: rgba(255, 255, 255, 0.5);
+    z-index: 9999;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+}
+
+/* ===== STATUS HUD ===== */
+#status {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: white;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 45, 45, 0.5);
+    padding: 10px 24px;
+    border-radius: 30px;
+    z-index: 9999;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.85rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    box-shadow: 0 0 20px rgba(255, 45, 45, 0.2);
+    backdrop-filter: blur(10px);
+}
+#status.active {
+    border-color: #00ff66;
+    color: #00ff66;
+    box-shadow: 0 0 20px rgba(0, 255, 100, 0.3);
+}
+
+/* ===== BRAND LOGO ===== */
+.brand {
+    position: fixed;
+    top: 80px;
+    left: 20px;
+    z-index: 9998;
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 1.2rem;
+    letter-spacing: 0.3em;
+    color: white;
+    text-shadow: 0 0 15px rgba(255, 45, 45, 0.8);
+    text-transform: uppercase;
+}
+.brand .red { color: #ff2d2d; }
+
+/* ===== HAND INDICATORS ===== */
+.hand-indicator {
+    position: fixed;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.8rem;
+    background: rgba(0, 0, 0, 0.5);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    z-index: 9998;
+    transition: all 0.2s ease;
+    opacity: 0.3;
+}
+.hand-indicator.left { left: 250px; }
+.hand-indicator.right { right: 70px; }
+.hand-indicator.active {
+    opacity: 1;
+    border-color: #ff2d2d;
+    background: rgba(255, 45, 45, 0.3);
+    box-shadow: 0 0 30px rgba(255, 45, 45, 0.6);
+    transform: translateY(-50%) scale(1.2);
+}
+
+/* ===== VIKING ECOSYSTEM ===== */
+model-viewer {
+    position: absolute;
+    width: 150px;
+    height: 150px;
+    transition: opacity 0.35s ease, transform 0.2s ease;
+    z-index: 5;
+}
+
+/* ===== A-FRAME PERSONAJE (centro inferior) ===== */
+#personaje-stage {
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 800px;
+    height: 60vh;
+    z-index: 10;
+    pointer-events: auto;
+}
+#personaje-stage a-scene { background: transparent !important; }
+#personaje-stage a-scene a-entity { background: transparent !important; }
+
+/* ===== INSTRUCCIONES ===== */
+.instructions {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9998;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 45, 45, 0.4);
+    padding: 12px 24px;
+    border-radius: 24px;
+    color: white;
+    font-size: 0.85rem;
+    letter-spacing: 0.05em;
+    backdrop-filter: blur(10px);
+    pointer-events: none;
+    text-align: center;
+    max-width: 90vw;
+}
+.instructions .key { color: #ff2d2d; font-weight: 700; }
+
+/* ===== START OVERLAY ===== */
+#startOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    text-align: center;
+    padding: 40px;
+    backdrop-filter: blur(20px);
+}
+#startOverlay.hidden { display: none; }
+#startOverlay h1 {
+    font-family: 'Orbitron', sans-serif;
+    font-size: clamp(2.5rem, 6vw, 4rem);
+    background: linear-gradient(135deg, #ff2d2d 0%, #ffaa00 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 20px;
+    text-transform: uppercase;
+}
+#startOverlay p {
+    font-size: 1.1rem;
+    color: rgba(255, 255, 255, 0.8);
+    margin-bottom: 12px;
+    max-width: 600px;
+    line-height: 1.6;
+}
+#startBtn {
+    margin-top: 30px;
+    padding: 20px 50px;
+    background: linear-gradient(135deg, #ff2d2d 0%, #b30000 100%);
+    border: 2px solid #ff5050;
+    color: white;
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    font-size: 1.2rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    border-radius: 40px;
+    cursor: pointer;
+    box-shadow: 0 0 30px rgba(255, 45, 45, 0.5);
+    transition: all 0.3s ease;
+}
+#startBtn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 50px rgba(255, 45, 45, 0.7);
+}
+</style>
+
+<!-- A-Frame scene para nuestro personaje con animación -->
+<script>
+/* =========================
+   PERSONAJE 3D — Lógica de animación
+   (port de holasebas)
+========================= */
+const ANIMATIONS = {
+    1: "Armature.001|mixamo.com|Layer0",
+    2: "Armature.001|mixamo.com|Layer0.001",
+    3: "Armature.001|mixamo.com|Layer0.002",
+    4: "Armature.001|mixamo.com|Layer0.003",
+    5: "Armature.001|mixamo.com|Layer0.004",
+    6: "Armature.001|mixamo.com|Layer0.005",
+    7: "Armature.001|mixamo.com|Layer0.006",
+    8: "Armature.001|mixamo.com|Layer0.007",
+    9: "Armature|mixamo.com|Layer0",
+    0: "Armature|mixamo.com|Layer0.001"
+};
+const IDLE_ANIMS = [1, 3, 6];
+const RUN_ANIMS = [2, 4];
+const WALK_ANIM = 5;
+const JUMP_MOVING = 7;
+const JUMP_IDLE = 8;
+const JUMP_CONFIG = {
+    [JUMP_IDLE]: { duration: 1.8, height: 2.0, startOffset: 0.5, peakDelay: 0.5, peakTime: 0.5 },
+    [JUMP_MOVING]: { duration: 0.7, height: 1.0, startOffset: 0.05, peakDelay: 0.08, peakTime: 0.4 }
+};
+let modelReady = false;
+let currentClipName = "";
+let isMoving = false;
+let isRunning = false;
+let isJumping = false;
+let jumpStartTime = 0;
+let jumpConfigCurrent = null;
+let jumpTimer = null;
+let jumpPhysicsTimer = null;
+let walkSpeed = 4.0;
+let runSpeed = 8.0;
+let currentSpeed = walkSpeed;
+const keys = { w: false, s: false, a: false, d: false };
+let player = null, playerModel = null, cameraRig = null;
+
+function randomItem(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function saveNormalAnimation() {
+    if (isMoving) { return isRunning ? randomItem(RUN_ANIMS) : WALK_ANIM; }
+    return randomItem(IDLE_ANIMS);
+}
+function applyNormalAnimation() {
+    if (!playerModel || !modelReady || isJumping) return;
+    const n = saveNormalAnimation();
+    const name = ANIMATIONS[n];
+    if (!name) return;
+    playerModel.setAttribute('animation-mixer', { clip: name, loop: 'repeat', crossFadeDuration: 0.15 });
+    currentClipName = name;
+}
+function applyJumpAnimation() {
+    if (!playerModel || !modelReady) return;
+    const jumpType = isMoving ? JUMP_MOVING : JUMP_IDLE;
+    jumpConfigCurrent = JUMP_CONFIG[jumpType];
+    const animName = ANIMATIONS[jumpType];
+    if (!animName) return;
+    const startTime = jumpConfigCurrent.startOffset;
+    playerModel.removeAttribute('animation-mixer');
+    setTimeout(() => {
+        playerModel.setAttribute('animation-mixer', { clip: animName, loop: 'repeat', crossFadeDuration: 0, timeScale: 1.0, startAt: startTime });
+        currentClipName = animName;
+    }, 30);
+}
+window.applyNormalAnimation = applyNormalAnimation;
+window.applyJumpAnimation = applyJumpAnimation;
+window.performJump = function() {
+    if (isJumping || !modelReady) return;
+    isJumping = true;
+    jumpStartTime = Date.now();
+    const pos = player.getAttribute('position');
+    const startY = pos.y;
+    const cfg = JUMP_CONFIG[isMoving ? JUMP_MOVING : JUMP_IDLE];
+    applyJumpAnimation();
+    if (jumpTimer) clearTimeout(jumpTimer);
+    if (jumpPhysicsTimer) clearTimeout(jumpPhysicsTimer);
+    jumpPhysicsTimer = setTimeout(() => {
+        const t0 = performance.now();
+        const dur = cfg.duration * 1000;
+        const peak = cfg.height;
+        function tick(t) {
+            const elapsed = t - t0;
+            const p = Math.min(1, elapsed / dur);
+            const h = 4 * peak * p * (1 - p);
+            const cp = player.getAttribute('position');
+            player.setAttribute('position', `${cp.x} ${startY + h} ${cp.z}`);
+            if (p < 1) requestAnimationFrame(tick);
+            else {
+                const cp2 = player.getAttribute('position');
+                player.setAttribute('position', `${cp2.x} 0.5 ${cp2.z}`);
+                isJumping = false;
+                applyNormalAnimation();
+            }
+        }
+        requestAnimationFrame(tick);
+    }, cfg.peakDelay * 1000);
+    jumpTimer = setTimeout(() => {
+        if (jumpPhysicsTimer) clearTimeout(jumpPhysicsTimer);
+        isJumping = false;
+        setTimeout(() => applyNormalAnimation(), 50);
+    }, (cfg.duration + cfg.peakDelay) * 1000);
+};
+window.resetPosition = function() {
+    if (player) {
+        player.setAttribute('position', '0 0.5 0');
+        player.setAttribute('rotation', '0 0 0');
+    }
+};
+
+function setupInputs() {
+    window.addEventListener('keydown', (e) => {
+        const key = e.key.toLowerCase();
+        if (key === 'w' || key === 'arrowup') keys.w = true;
+        if (key === 's' || key === 'arrowdown') keys.s = true;
+        if (key === 'a' || key === 'arrowleft') keys.a = true;
+        if (key === 'd' || key === 'arrowright') keys.d = true;
+        if (key === 'r') { window.resetPosition(); e.preventDefault(); }
+        if (key === 'shift') {
+            isRunning = true;
+            currentSpeed = runSpeed;
+            if (!isJumping && modelReady) applyNormalAnimation();
+            e.preventDefault();
+        }
+        if ((key === ' ' || key === 'space') && !isJumping && modelReady) {
+            window.performJump();
+            e.preventDefault();
+        }
+        const hasInput = keys.w || keys.s || keys.a || keys.d;
+        if (hasInput !== isMoving && !isJumping && modelReady) {
+            isMoving = hasInput;
+            applyNormalAnimation();
+        }
+    });
+    window.addEventListener('keyup', (e) => {
+        const key = e.key.toLowerCase();
+        if (key === 'w' || key === 'arrowup') keys.w = false;
+        if (key === 's' || key === 'arrowdown') keys.s = false;
+        if (key === 'a' || key === 'arrowleft') keys.a = false;
+        if (key === 'd' || key === 'arrowright') keys.d = false;
+        if (key === 'shift') {
+            isRunning = false;
+            currentSpeed = walkSpeed;
+            if (!isJumping && modelReady) applyNormalAnimation();
+        }
+        const hasInput = keys.w || keys.s || keys.a || keys.d;
+        if (hasInput !== isMoving && !isJumping && modelReady) {
+            isMoving = hasInput;
+            applyNormalAnimation();
+        }
+    });
+}
+
+function updateNormalState() {
+    if (isJumping || !modelReady) return;
+    applyNormalAnimation();
+}
+
+let lastFrameTime = performance.now();
+function updatePlayer(dt) {
+    if (!player || !cameraRig) return;
+    if (isJumping) return;
+    const moveX = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+    const moveZ = (keys.s ? 1 : 0) - (keys.w ? 1 : 0);
+    if (moveX === 0 && moveZ === 0) return;
+    cameraRig.object3D.getWorldDirection(tmpForward);
+    tmpForward.y = 0;
+    tmpForward.normalize();
+    tmpRight.set(tmpForward.z, 0, -tmpForward.x);
+    const speed = currentSpeed * dt;
+    const vx = moveX, vz = moveZ;
+    const dx = (tmpForward.x * vz + tmpRight.x * vx) * speed;
+    const dz = (tmpForward.z * vz + tmpRight.z * vx) * speed;
+    const pos = player.getAttribute('position');
+    player.setAttribute('position', `${pos.x + dx} ${pos.y} ${pos.z + dz}`);
+}
+const tmpForward = new THREE.Vector3();
+const tmpRight = new THREE.Vector3();
+
+function loop() {
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
+    lastFrameTime = now;
+    updatePlayer(dt);
+    requestAnimationFrame(loop);
+}
+</script>
+</head>
+
+<body>
+
+<!-- Fondo degradado animado -->
+<div class="gradient-bg"></div>
+<div class="scanlines"></div>
+
+<!-- HUD -->
+<div class="brand">🥤 <span class="red">COCA-COLA</span> · ECOSYSTEM</div>
+<div id="status">⏳ Cargando...</div>
+
+<!-- Cámara del usuario -->
+<video id="camera" autoplay muted playsinline></video>
+
+<!-- Indicadores de mano -->
+<div class="hand-indicator left" id="handL">✋</div>
+<div class="hand-indicator right" id="handR">✋</div>
+
+<!-- Audio meter -->
+<div id="meterContainer">
+    <div id="meter"></div>
+</div>
+<div id="meterLabel">VOL</div>
+
+<!-- A-Frame: nuestro personaje con joystick -->
+<div id="personaje-stage">
+    <a-scene embedded background="transparent">
+        <a-entity light="type: ambient; intensity: 0.8"></a-entity>
+        <a-entity light="type: directional; intensity: 1.4" position="5 10 3"></a-entity>
+        <a-entity light="type: point; intensity: 1.0" position="0 3 0" color="#ffaa66"></a-entity>
+
+        <a-entity id="player" position="0 0.5 5">
+            <a-entity id="playerModel"
+                gltf-model="personaje7/perosnaje_001.gltf"
+                scale="2.5 2.5 2.5"
+                position="0 -0.6 0"
+                animation-mixer="clip: Armature|mixamo.com|Layer0">
+            </a-entity>
+            <a-entity id="sombra"
+                geometry="primitive: circle; radius: 1.2; segments: 32"
+                material="color: #000000; opacity: 0.2; transparent: true; side: double"
+                rotation="-90 0 0"
+                position="0 -0.25 0">
+            </a-entity>
+        </a-entity>
+
+        <a-entity id="cameraRig" position="0 1.6 8">
+            <a-camera look-controls wasd-controls-enabled="false"></a-camera>
+        </a-entity>
+    </a-scene>
+</div>
+
+<!-- Overlay de inicio (pide permisos) -->
+<div id="startOverlay">
+    <h1>🥤 Coca-Cola Ecosystem</h1>
+    <p>Detectamos <strong>tus manos</strong> y el <strong>volumen de tu voz</strong> para activar el ecosistema de vikingos 3D.</p>
+    <p>Además, podés controlar a <strong>Sebas</strong> con <span style="color:#ff2d2d">WASD / Joystick</span> en mobile.</p>
+    <p style="font-size:0.85rem; opacity:0.6; margin-top:20px;">🔒 Tu cámara y micrófono se procesan localmente. No se graba nada.</p>
+    <button id="startBtn">ACTIVAR CÁMARA Y MIC</button>
+</div>
+
+<!-- Script principal: ecosystem + joystick -->
+<script src="joystick.js"></script>
+<script>
+/* =========================
+   ECOSYSTEM (codimexa)
+========================= */
+const models = [];
+let micVolume = 0;
+let leftHandUp = false;
+let rightHandUp = false;
+
+/* AUDIO METER */
+async function initMic() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const ctx = new AudioContext();
+        const src = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        src.connect(analyser);
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        function loop() {
+            analyser.getByteFrequencyData(data);
+            let sum = 0;
+            for (let v of data) sum += v;
+            micVolume = sum / data.length;
+            const meter = document.getElementById("meter");
+            if (meter) meter.style.height = Math.min(micVolume * 2.2, 100) + "%";
+            requestAnimationFrame(loop);
+        }
+        loop();
+    } catch (e) {
+        console.warn('Mic denied:', e);
+    }
+}
+
+/* HANDS (MediaPipe) */
+function initHands(video) {
+    const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+    hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7
+    });
+    hands.onResults((results) => {
+        leftHandUp = false;
+        rightHandUp = false;
+        if (!results.multiHandLandmarks) return;
+        results.multiHandLandmarks.forEach((hand, i) => {
+            // Y in MediaPipe: 0=top, 1=bottom. Hand[8] = index fingertip, hand[0] = wrist
+            // Hand is "up" if index tip is ABOVE wrist (lower y)
+            const isUp = hand[8].y < hand[0].y - 0.05;
+            if (i === 0) leftHandUp = isUp;
+            if (i === 1) rightHandUp = isUp;
+        });
+        // Update hand indicators
+        const hl = document.getElementById('handL');
+        const hr = document.getElementById('handR');
+        if (hl) hl.classList.toggle('active', leftHandUp);
+        if (hr) hr.classList.toggle('active', rightHandUp);
+    });
+    const camera = new Camera(video, {
+        onFrame: async () => { await hands.send({ image: video }); },
+        width: 640,
+        height: 480
+    });
+    camera.start();
+}
+
+/* SPAWN VIKING MODEL (uses model-viewer) */
+function spawnModel() {
+    const m = document.createElement("model-viewer");
+    // Use a free viking/gladiator glb from KhronosGroup (same family as codimexa)
+    m.src = "https://modelviewer.dev/shared-assets/models/RobotExpressive.glb";
+    m.autoplay = true;
+    m.cameraControls = false;
+    m.setAttribute('animation-name', 'Idle');
+    const side = Math.random() < 0.5 ? "left" : "right";
+    m.dataset.side = side;
+    m.style.left = (side === "left" ? Math.random() * 45 : 50 + Math.random() * 45) + "vw";
+    m.style.top = (Math.random() * 75) + "vh";
+    m.style.position = "absolute";
+    m.style.width = "150px";
+    m.style.height = "150px";
+    m.style.opacity = "0.9";
+    m.style.zIndex = "5";
+    document.body.appendChild(m);
+    models.push(m);
+}
+
+function applySystem() {
+    const t = Date.now() * 0.001;
+    models.forEach((m, i) => {
+        const side = m.dataset.side;
+        let active = false;
+        if (leftHandUp && rightHandUp) active = true;
+        else if (leftHandUp && !rightHandUp) active = (side === "left");
+        else if (rightHandUp && !leftHandUp) active = (side === "right");
+        else active = true;
+
+        m.style.opacity = active ? "1" : "0.05";
+        const intensity = 6 + micVolume * 0.2;
+        m.style.transform = `translate(${Math.sin(t + i) * intensity}px, ${Math.cos(t + i) * intensity}px) scale(${1 + micVolume * 0.01})`;
+    });
+}
+
+function ecosystemLoop() {
+    applySystem();
+    requestAnimationFrame(ecosystemLoop);
+}
+
+/* =========================
+   INIT FLOW
+========================= */
+const startBtn = document.getElementById('startBtn');
+const startOverlay = document.getElementById('startOverlay');
+const statusEl = document.getElementById('status');
+
+startBtn.addEventListener('click', async () => {
+    startBtn.disabled = true;
+    startBtn.textContent = '⏳ SOLICITANDO PERMISOS...';
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        const video = document.getElementById('camera');
+        video.srcObject = stream;
+        await video.play().catch(() => {});
+
+        statusEl.textContent = '🟢 SISTEMA ACTIVO';
+        statusEl.classList.add('active');
+
+        // Init ecosystem
+        for (let i = 0; i < 20; i++) spawnModel();
+        ecosystemLoop();
+
+        // Init mic + hands
+        initMic();
+        initHands(video);
+
+        // Hide overlay
+        setTimeout(() => startOverlay.classList.add('hidden'), 800);
+    } catch (e) {
+        console.error('Permiso denegado:', e);
+        statusEl.textContent = '❌ PERMISO DENEGADO';
+        startBtn.textContent = 'REINTENTAR';
+        startBtn.disabled = false;
+    }
+});
+
+/* =========================
+   A-FRAME INIT (personaje)
+========================= */
+document.addEventListener('DOMContentLoaded', () => {
+    const scene = document.querySelector('a-scene');
+    scene.addEventListener('loaded', () => {
+        player = document.getElementById('player');
+        playerModel = document.getElementById('playerModel');
+        cameraRig = document.getElementById('cameraRig');
+        if (playerModel) {
+            playerModel.addEventListener('model-loaded', () => {
+                modelReady = true;
+                applyNormalAnimation();
+                setupInputs();
+                lastFrameTime = performance.now();
+                requestAnimationFrame(loop);
+                console.log('🎭 Personaje 3D listo');
+            });
+        }
+    });
+});
+</script>
+
+</body>
+</html>
